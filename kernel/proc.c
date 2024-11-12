@@ -111,6 +111,9 @@ allocproc(void)
 {
   struct proc *p;
 
+  
+  
+
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
@@ -124,6 +127,9 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+
+  //追加一个初始化掩码为0
+  p->trace_mask = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -301,6 +307,8 @@ fork(void)
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
+
+  np->trace_mask = p->trace_mask;//把掩码传递给子进程
 
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)

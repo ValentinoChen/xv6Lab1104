@@ -22,6 +22,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int trace(int mask);//添加了trace系统调用,有这个mask是因为lab的原话，他应该包含一个参数，整数mask。
 
 // ulib.c
 int stat(const char*, struct stat*);
