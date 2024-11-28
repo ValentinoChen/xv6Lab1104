@@ -94,6 +94,7 @@ supercheck(uint64 s)
     if(pte == 0)
       err("no pte");
     if ((uint64) last_pte != 0 && pte != last_pte) {
+      printf("Previous PTE=0x%lx, Current PTE=0x%lx\n", last_pte, pte);//用于调试的信息2
         err("pte different");
     }
     if((pte & PTE_V) == 0 || (pte & PTE_R) == 0 || (pte & PTE_W) == 0){
@@ -110,6 +111,7 @@ supercheck(uint64 s)
     if(*(int*)(s+i) != i)
       err("wrong value");
   }
+  printf("super check ok\n");
 }
 
 void
@@ -122,11 +124,13 @@ superpg_test()
   
   char *end = sbrk(N);
   if (end == 0 || end == (char*)0xffffffffffffffff)
+    // 检查 sbrk() 是否失败。如果失败，输出错误信息并终止程序。
     err("sbrk failed");
   
   uint64 s = SUPERPGROUNDUP((uint64) end);
   supercheck(s);
   if((pid = fork()) < 0) {
+    // 如果 fork 失败，输出错误信息。
     err("fork");
   } else if(pid == 0) {
     supercheck(s);
@@ -135,8 +139,11 @@ superpg_test()
     int status;
     wait(&status);
     if (status != 0) {
+      // 如果子进程的退出状态非零，退出程序。
       exit(0);
     }
   }
+  // 如果所有检查都通过，输出成功信息。
   printf("superpg_test: OK\n");  
 }
+

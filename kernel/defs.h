@@ -203,6 +203,12 @@ void            virtio_disk_intr(void);
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
 
 
+//下面两行是我加的
+void *superKalloc();
+void superKfree(void *pa);
+
+
+
 
 #ifdef LAB_PGTBL
 // vmcopyin.c

@@ -363,8 +363,10 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PGSHIFT 12  // bits of offset within a page
 
 #ifdef LAB_PGTBL
-#define SUPERPGSIZE (2 * (1 << 20)) // bytes per page
+#define SUPERPGSIZE (2 * (1 << 20)) // bytes per page,(1 << 20) 表示 2^20，即 1 MB.超级页面每页占用 2 MB.
 #define SUPERPGROUNDUP(sz)  (((sz)+SUPERPGSIZE-1) & ~(SUPERPGSIZE-1))
+//右边括号的左侧，将 sz 加上一个偏移量（SUPERPGSIZE-1），确保最终值在超级页面边界之后；
+//括号的右侧，使用按位与操作清除低位，确保结果是SUPERPGSIZE的倍数
 #endif
 
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
@@ -375,6 +377,8 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
+
+#define PTE_SUPER (1L << 5) //将第 5 位（从 0 开始计数）设置为 1，用来区别普通页和superpage,在二级页表上直接添加pte——super的标记
 
 
 

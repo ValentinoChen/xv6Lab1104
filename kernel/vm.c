@@ -7,6 +7,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "fs.h"
+#include <stdint.h>
+
+#define SUPERPAGE_SIZE (2 * 1024 * 1024) // 定义超级页大小为2MB
+
 
 /*
  * the kernel's page table.
@@ -92,30 +96,87 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+
+
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
-{
+{//pagetable：当前进程的页表,va：需要查询或映射的虚拟地址,alloc：如果设置为 1，当查找不到页表项时，分配一个新的页表
+//它的作用是，在页表中找到虚拟地址 va 对应的页表项指针。如果不存在对应的页表，且 alloc=1，则会分配新页表。
+    if (va >= MAXVA)
+        panic("walk");
+
+    // 遍历页表层级，从最顶层到叶子级
+    for (int level = 2; level > 0; level--) {
+        pte_t *pte = &pagetable[PX(level, va)];
+        
+        if (*pte & PTE_V) {
+           pagetable = (pagetable_t)PTE2PA(*pte);
+           //如果查到超级页表，就直接返回，不再读取第三级页表
+           if(*pte & PTE_SUPER){
+            return pte;
+           }
+
+#ifdef LAB_PGTBL
+            // 如果是叶子节点（例如超级页）直接返回
+            if (PTE_LEAF(*pte)) {
+                return pte;
+            }
+#endif
+        } else {
+            if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
+                return 0;
+            // 为当前级别分配新页表，并初始化
+            memset(pagetable, 0, PGSIZE);
+            *pte = PA2PTE(pagetable) | PTE_V;
+        }
+    }
+    // 返回最低级别页表项的地址
+    return &pagetable[PX(0, va)];
+}
+
+//得到二级页表项
+pte_t *
+walkSuper(pagetable_t pagetable, uint64 va, int alloc){
   if(va >= MAXVA)
     panic("walk");
-
-  for(int level = 2; level > 0; level--) {
-    pte_t *pte = &pagetable[PX(level, va)];
-    if(*pte & PTE_V) {
-      pagetable = (pagetable_t)PTE2PA(*pte);
-#ifdef LAB_PGTBL
-      if(PTE_LEAF(*pte)) {
-        return pte;
-      }
-#endif
-    } else {
-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
-        return 0;
-      memset(pagetable, 0, PGSIZE);
-      *pte = PA2PTE(pagetable) | PTE_V;
-    }
+  
+  pte_t *pte = &pagetable[PX(2, va)];
+  if(*pte & PTE_V){
+    pagetable = (pagetable_t)PTE2PA(*pte);
+  }else{
+    if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+      return 0;
+    memset(pagetable, 0, PGSIZE);
+    *pte = PA2PTE(pagetable) | PTE_V;
   }
-  return &pagetable[PX(0, va)];
+  return &pagetable[PX(1, va)];
 }
+
+int 
+mapSuperPage(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm){
+  if(va % SUPERPGSIZE != 0){
+    printf("will cover other page\n");
+    return -1;
+  }
+  uint64 a, last;
+  pte_t *pte;
+  a = va;
+  last = va + size - SUPERPGSIZE;
+  for(;;){
+    if((pte = walkSuper(pagetable, va, 1)) == 0){
+      printf("walkSuper error \n");
+      return -1;
+    }
+  
+  *pte = PA2PTE(pa) | perm | PTE_U | PTE_V | PTE_SUPER;
+  if(a == last)
+    break;
+  a += SUPERPGSIZE;
+  pa += SUPERPGSIZE;
+  }
+  return 0;
+}
+
 
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
@@ -187,6 +248,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   return 0;
 }
 
+
+
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
 // Optionally free the physical memory.
@@ -211,12 +274,22 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
+      if((*pte & PTE_SUPER) == 0){//跟超级页面匹配时0，说明时普通页面
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
+    }else if(*pte & PTE_SUPER){//超级页面
+      uint64 pa = PTE2PA(*pte);
+      superKfree((void*)pa);
+      }else{
+        panic("unknown free\n");
+      }
+    }
+    if(*pte & PTE_SUPER){
+      sz = SUPERPGSIZE;
     }
     *pte = 0;
-  }
-}
+    }
+}   
 
 // create an empty user page table.
 // returns 0 if out of memory.
@@ -252,7 +325,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
-{
+{// 遍历指定的地址范围，分配物理页并调用 mappages 进行映射
   char *mem;
   uint64 a;
   int sz;
@@ -262,22 +335,49 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += sz){
-    sz = PGSIZE;
-    mem = kalloc();
-    if(mem == 0){
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
+    // sz = PGSIZE;
+    // mem = kalloc();
+    // if(mem == 0){
+    //   uvmdealloc(pagetable, a, oldsz);
+    //   return 0;
+    // }
+    if(a % SUPERPGSIZE == 0 && a + SUPERPGSIZE <= newsz){
+      sz = SUPERPGSIZE;
+      mem = superKalloc();
+      printf("malloc super page\n");
+    }else{
+      sz = PGSIZE;
+      mem = kalloc();
     }
-#ifndef LAB_SYSCALL
+    if(sz == SUPERPGSIZE)
+      printf("uvmalloc SUPERPGSIZE\n");
+    
+    if(mem == 0){
+      printf("unmapped: mem == 0 \n");
+      uvmdealloc(pagetable, a, oldsz);
+      return 0 ;
+    }
+  #ifndef LAB_SYSCALL
     memset(mem, 0, sz);
-#endif
+  #endif
+   if(sz == PGSIZE){
     if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
+  }else{//分配超级页面
+    if(mapSuperPage(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) !=0){
+      printf("mapSuperPage error\n");
+      superKfree(mem);
+      uvmdealloc(pagetable, a, oldsz);
+      return 0;
+    }
+
+  }
   }
   return newsz;
+  
 }
 
 // Deallocate user pages to bring the process size from oldsz to
@@ -286,7 +386,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 // process size.  Returns the new process size.
 uint64
 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
-{
+{// 遍历范围，取消映射页表，并释放物理页
   if(newsz >= oldsz)
     return oldsz;
 
@@ -305,7 +405,7 @@ freewalk(pagetable_t pagetable)
 {
   // there are 2^9 = 512 PTEs in a page table.
   for(int i = 0; i < 512; i++){
-    pte_t pte = pagetable[i];
+    pte_t pte = pagetable[i];// 获取当前页表项
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
@@ -315,7 +415,7 @@ freewalk(pagetable_t pagetable)
       panic("freewalk: leaf");
     }
   }
-  kfree((void*)pagetable);
+  kfree((void*)pagetable);// 释放当前页表本身所占用的内存。
 }
 
 // Free user memory pages,
@@ -345,13 +445,13 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += szinc){
     szinc = PGSIZE;
-    szinc = PGSIZE;
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
+    if((*pte & PTE_SUPER) == 0){
     if((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
@@ -359,6 +459,17 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       kfree(mem);
       goto err;
     }
+  }else{
+    szinc = SUPERPGSIZE;
+    if((mem = superKalloc()) == 0)
+      goto err;
+    memmove(mem, (char*)pa, SUPERPGSIZE);
+    if(mapSuperPage(new, i, SUPERPGSIZE, (uint64)mem, flags) != 0){
+      superKfree(mem);
+      goto err;
+    }
+  }
+  
   }
   return 0;
 
@@ -366,6 +477,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
+
+
 
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
@@ -486,11 +599,34 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
+//printf(" %p: pte %p pa %p\n", (void *)(uintptr_t)i, (void *)pte, (void *)child);
+void vmprintR(pagetable_t pagetable, int level) {
+  
+
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      uint64 pa = PTE2PA(pte);
+
+      for (int j = 0; j < level; j++) {
+                printf(" ..");
+            }
+
+      printf("%p: pte %p pa %p\n", (void *)(uintptr_t)i, (void *)pte, (void *)pa);
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        vmprintR((pagetable_t)pa, level + 1);
+      }
+    }
+  }
+}
 
 #ifdef LAB_PGTBL
 void
 vmprint(pagetable_t pagetable) {
   // your code here
+  printf("page table %p\n", pagetable);
+   vmprintR(pagetable, 1);
+  
 }
 #endif
 

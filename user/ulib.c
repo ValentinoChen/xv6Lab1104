@@ -159,3 +159,4 @@ ugetpid(void)
   return u->pid;
 }
 #endif
+//将宏 USYSCALL 指向的地址转换为 struct usyscall 的指针，表示 u 是一个指向 usyscall 数据结构的指针

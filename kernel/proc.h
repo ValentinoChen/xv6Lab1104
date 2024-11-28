@@ -81,9 +81,12 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+struct usyscall;
 // Per-process state
 struct proc {
   struct spinlock lock;
+
+  struct usyscall *usyscall_page;//在proc头文件加一个usyscall结构体引用
 
   // p->lock must be held when using these:
   enum procstate state;        // Process state

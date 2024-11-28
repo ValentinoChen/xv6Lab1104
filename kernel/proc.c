@@ -111,7 +111,7 @@ allocproc(void)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(p = proc; p < &proc[NPROC]; p++) {//proc+NPROC
     acquire(&p->lock);
     if(p->state == UNUSED) {
       goto found;
@@ -132,6 +132,15 @@ found:
     return 0;
   }
 
+  //分配一个usyscall页面
+  if((p->usyscall_page = (struct usyscall *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+
+  }
+  p->usyscall_page->pid = p->pid;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -146,7 +155,11 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  
+
   return p;
+
+
 }
 
 // free a proc structure and the data hanging from it,
@@ -155,6 +168,10 @@ found:
 static void
 freeproc(struct proc *p)
 {
+  if(p->usyscall_page){
+    kfree((void *)p->usyscall_page);
+  }
+
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
@@ -169,6 +186,9 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  
+  
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -197,10 +217,19 @@ proc_pagetable(struct proc *p)
   // trampoline.S.
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
-    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);//前面的建立映射失败的话才执行，
+    uvmfree(pagetable, 0);//释放页表
+    return 0;
+  }
+
+  //把usyscall页映射到USYSCALL
+  if(mappages(pagetable, USYSCALL, PGSIZE,
+              (uint64)(p->usyscall_page), PTE_R | PTE_U) < 0){//PTE_U是让用户态可访问
+    uvmunmap(pagetable, USYSCALL, 1, 0);
     uvmfree(pagetable, 0);
     return 0;
   }
+  
 
   return pagetable;
 }
@@ -212,7 +241,13 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0);//取消页表的映射关系
+
   uvmfree(pagetable, sz);
+
+  
+  
+  
 }
 
 // a user program that calls exec("/init")
@@ -260,17 +295,17 @@ int
 growproc(int n)
 {
   uint64 sz;
-  struct proc *p = myproc();
+  struct proc *p = myproc();// 获取当前进程
 
-  sz = p->sz;
-  if(n > 0){
+  sz = p->sz;// 当前地址空间大小
+  if(n > 0){// 增加地址空间
     if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
       return -1;
     }
-  } else if(n < 0){
+  } else if(n < 0){// 减少地址空间
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
-  p->sz = sz;
+  p->sz = sz;// 更新地址空间大小
   return 0;
 }
 

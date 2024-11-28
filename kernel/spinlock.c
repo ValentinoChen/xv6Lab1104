@@ -104,7 +104,9 @@ pop_off(void)
     panic("pop_off - interruptible");
   if(c->noff < 1)
     panic("pop_off");
+    
   c->noff -= 1;
   if(c->noff == 0 && c->intena)
     intr_on();
+  
 }
