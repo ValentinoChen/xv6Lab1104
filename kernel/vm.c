@@ -134,7 +134,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     return &pagetable[PX(0, va)];
 }
 
-//得到二级页表项
+//得到二级页表项，仿制walk函数就行
 pte_t *
 walkSuper(pagetable_t pagetable, uint64 va, int alloc){
   if(va >= MAXVA)
@@ -151,7 +151,7 @@ walkSuper(pagetable_t pagetable, uint64 va, int alloc){
   }
   return &pagetable[PX(1, va)];
 }
-
+//把超级页面标记到页表上
 int 
 mapSuperPage(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm){
   if(va % SUPERPGSIZE != 0){
@@ -326,6 +326,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {// 遍历指定的地址范围，分配物理页并调用 mappages 进行映射
+//分配pte和物理内存以将进程从oldsz扩展到newsz，这不需要进行页面对齐。返回新的大小，出错时返回0
   char *mem;
   uint64 a;
   int sz;
@@ -341,11 +342,11 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
     //   uvmdealloc(pagetable, a, oldsz);
     //   return 0;
     // }
-    if(a % SUPERPGSIZE == 0 && a + SUPERPGSIZE <= newsz){
+    if(a % SUPERPGSIZE == 0 && a + SUPERPGSIZE <= newsz){//页面够大，并且能作为超级页面的起始地址
       sz = SUPERPGSIZE;
       mem = superKalloc();
       printf("malloc super page\n");
-    }else{
+    }else{//正常页面
       sz = PGSIZE;
       mem = kalloc();
     }
@@ -366,7 +367,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
-  }else{//分配超级页面
+  }else{//分配超级页面，模仿上面正常页面就行
     if(mapSuperPage(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) !=0){
       printf("mapSuperPage error\n");
       superKfree(mem);
@@ -459,7 +460,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       kfree(mem);
       goto err;
     }
-  }else{
+  }else{//模仿正常页面给子进程的超级页面做复制
     szinc = SUPERPGSIZE;
     if((mem = superKalloc()) == 0)
       goto err;
@@ -599,40 +600,69 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
+
+
 //printf(" %p: pte %p pa %p\n", (void *)(uintptr_t)i, (void *)pte, (void *)child);
-void vmprintR(pagetable_t pagetable, int level) {
-  
+// The function to print the page table
 
-  for(int i = 0; i < 512; i++){
-    pte_t pte = pagetable[i];
-    if(pte & PTE_V){
-      uint64 pa = PTE2PA(pte);
 
-      for (int j = 0; j < level; j++) {
-                printf(" ..");
-            }
+//printf("%*s %p : pte %p pa %p\n", depth * 2, "", (void *)va, (void *)pte, (void *)pa);
 
-      printf("%p: pte %p pa %p\n", (void *)(uintptr_t)i, (void *)pte, (void *)pa);
-      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
-        vmprintR((pagetable_t)pa, level + 1);
-      }
+void vmprintR(pagetable_t pagetable, int level, uint64 va) {
+    if(level < 0){
+      return;
     }
-  }
+    for(int i=0;i<512;i++){
+      pte_t *pte = &pagetable[i];
+      if(!(*pte & PTE_V))
+        continue;
+      uint64 temp = va + (i << PXSHIFT(level));
+      pagetable_t page_next = (pagetable_t)PTE2PA(*pte);
+      for(int j=level; j<3; j++)
+        printf(" ..");
+      printf("%p pte %p pa %p\n",   (void *)(uintptr_t)temp, pte, page_next);
+      
+       vmprintR(page_next, level -1, temp);
+    }
+  
 }
-
 #ifdef LAB_PGTBL
+
 void
 vmprint(pagetable_t pagetable) {
   // your code here
   printf("page table %p\n", pagetable);
-   vmprintR(pagetable, 1);
+   vmprintR(pagetable, 2, 0);
   
 }
 #endif
 
+// #ifdef LAB_PGTBL
+// void vmprint_level(pagetable_t pagetable, int level, uint64 va) {
+//   char *delim = 0;
+//   if (level == 2) delim = "..";
+//   if (level == 1) delim = ".. ..";
+//   if (level == 0) delim = ".. .. ..";
+//   for (int i = 0; i < 512; i++) {
+//     pte_t pte = pagetable[i];
+//     if (pte & PTE_V) {
+//       uint64 curr_va = va + (i << (12 + 9 * level));
+//       uint64 pa = PTE2PA(pte);
+//       printf(" %s%p: pte %p pa %p\n", delim, (void*)curr_va, (void*)pte, (void*)pa);
+//       if (!PTE_LEAF(pte))
+//         vmprint_level((pagetable_t)pa, level - 1, curr_va);
+//     }
+//   }
+// }
 
+// void vmprint(pagetable_t pagetable) {
+//     printf("page table %p\n", pagetable);
+//     vmprint_level(pagetable, 2, 0);
+// }
+// #endif
 
 #ifdef LAB_PGTBL
+
 pte_t*
 pgpte(pagetable_t pagetable, uint64 va) {
   return walk(pagetable, va, 0);

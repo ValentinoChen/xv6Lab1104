@@ -44,11 +44,11 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end - 9 * SUPERPGSIZE; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end - 8 * SUPERPGSIZE; p += PGSIZE)
     kfree(p);
   
   p = (char*)SUPERPGROUNDUP((uint64)p);
-  for(; p + PGSIZE <= (char*)pa_end; p += SUPERPGSIZE)
+  for(; p + SUPERPGSIZE <= (char*)pa_end; p += SUPERPGSIZE)
     superKfree(p);
 }
 
@@ -67,7 +67,7 @@ kfree(void *pa)
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
-  r = (struct run*)pa;
+  r = (struct run*)pa;// i=2;
 
   acquire(&kmem.lock);
   r->next = kmem.freelist;
