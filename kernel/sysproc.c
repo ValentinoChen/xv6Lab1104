@@ -93,7 +93,7 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
-
+//以下两个函数都是新增
 uint64
 sys_sigalarm(void){
   int ticks;
