@@ -77,8 +77,28 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  // if(which_dev == 2)
+  //   yield();
+  //把上面的原来代码注释了，改成新的
+  if(which_dev == 2){
+    struct proc *proc = myproc();
+    //如果proc->alarm_interval 不是0，那alarm handler返回
+    if(proc->alarm_interval && proc->have_return){
+      if(++proc->passed_ticks == 2){
+        proc->saved_trapframe = *p->trapframe;
+        //cpu跳转到handler函数
+        proc->trapframe->epc = proc->handler_va;
+        proc->passed_ticks = 0;
+        //阻止可再入调用
+        proc->have_return = 0;
+        
+
+      }
+    }
+    else{
+      yield();
+    }
+  }
 
   usertrapret();
 }

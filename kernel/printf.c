@@ -165,6 +165,7 @@ panic(char *s)
   pr.locking = 0;
   printf("panic: ");
   printf("%s\n", s);
+  backtrace();//新增调用
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -175,4 +176,28 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+
+
+void
+backtrace(void){
+  printf("backtrace:\n");
+
+  uint64 ra, fp = r_fp();//获取当前函数的帧指针 (fp)，r_fp() 返回当前帧指针.ra是return address，来着risc5定义
+  uint64 pre_fp = *((uint64*) (fp - 16));// 获取上一个栈帧的帧指针 ( 16 字节为栈帧大小)
+// 打印栈回溯的过程
+  while (PGROUNDDOWN(fp) == PGROUNDDOWN(pre_fp))
+  {
+    ra = *(uint64 *) (fp - 8);// 获取当前栈帧的返回地址
+    printf("%p \n", (void*)ra);// 打印返回地址
+
+    fp = pre_fp; // 将当前帧指针移动到上一帧
+    pre_fp = *((uint64 *) (fp - 16));// 读取新帧的帧指针
+  }
+
+  ra = *(uint64 *) (fp - 8);
+  printf("%p \n", (void*)ra);
+  //循环结束后，fp 指向栈底层的栈帧（即最初的调用函数），此时打印栈底帧的返回地址
+  
 }

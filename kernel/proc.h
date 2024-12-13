@@ -104,4 +104,13 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  //追加
+  //在用户页使用的alarm控制器函数的虚地址
+  uint64 handler_va;//保存用户传递过来的handler地址
+  int alarm_interval;//报警的间隔
+  int passed_ticks;//已经经过的tick次数（数量也行）
+  //用来保存trapframe，从而在打断代码处重新恢复
+  struct trapframe saved_trapframe;
+  //验证我们是否还需要调用handler的布尔值
+  int have_return;
 };
