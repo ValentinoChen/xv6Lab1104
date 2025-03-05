@@ -23,10 +23,18 @@ struct {
   struct run *freelist;
 } kmem;
 
+struct //这个结构体是用来记录每个物理页面的引用数的
+{
+  struct spinlock lock;//物理地址最大是phystop
+  int ref[PHYSTOP/PGSIZE];//这里是数组的最大值，不是说现在已经有这么多计数
+}pageRef;
+
+
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&pageRef.lock, "Pageref");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -51,6 +59,14 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+
+  acquire(&pageRef.lock);//注意，共享计数只有在这里才会往下减，因为需要结合计数只剩1这个关键变量做判断，是否释放物理页。
+  if(pageRef.ref[(uint64)pa / PGSIZE ] > 1 ){
+    pageRef.ref[(uint64)pa / PGSIZE ] -= 1;
+    release(&pageRef.lock);
+    return;
+  }
+  release(&pageRef.lock);
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -72,11 +88,29 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    pageRef.ref[(uint64)r / PGSIZE] = 1;//分配页面的时候把计数设置为1
+  }
+    
   release(&kmem.lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+int
+intCount(uint64 pa){//这个函数用于添加计数
+  if((pa % PGSIZE) != 0 || (char*)pa < end || pa >= PHYSTOP)
+    return -1;
+  acquire(&pageRef.lock);
+  pageRef.ref[pa / PGSIZE] += 1;
+  release(&pageRef.lock);
+  return 1;
+}
+
+int
+getRefNum(uint64 pa){//这个函数用于获取计数
+  return pageRef.ref[pa / PGSIZE];
 }
